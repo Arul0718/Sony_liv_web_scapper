@@ -1,4 +1,0 @@
-pandas
-aiohttp
-nest-asyncio
-tqdm
