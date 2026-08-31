@@ -17,6 +17,8 @@ import re
 import nest_asyncio
 from aiohttp import ClientTimeout, TCPConnector
 from typing import Dict, List, Tuple, Set
+from tqdm.asyncio import tqdm as tqdm_asyncio   # <-- ADDED
+
 nest_asyncio.apply()
 
 # ============================================================
@@ -28,12 +30,10 @@ OUTPUT_DIR = "./results"
 PROGRESS_FILE = os.path.join(OUTPUT_DIR, f"part_{PART_NUMBER:02d}_progress.txt")
 OUTPUT_FILE = os.path.join(OUTPUT_DIR, f"part_{PART_NUMBER:02d}_sonyliv_results.csv")
 
-# Column names (these are exactly as in your CSV)
 ROW_INDEX_COLUMN = "row_index"
 TITLE_COLUMN = "primaryTitle"
 TCONST_COLUMN = "tconst"
 
-# Processing settings
 MAX_VIDEOS_PER_TITLE = 10
 MAX_CONCURRENT_REQUESTS = 20
 BATCH_SIZE = 100
@@ -41,7 +41,6 @@ REQUEST_TIMEOUT = 45
 SEMAPHORE_LIMIT = 20
 CHUNK_SIZE = 50000
 
-# ---------- SonyLIV API ----------
 SONYLIV_SEARCH_URL = "https://apiv3.sonyliv.com/AGL/4.8/A/ENG/WEB/IN/TN/TRAY/SEARCH"
 SONYLIV_PARAMS = {
     "app_version": "3.10.3",
@@ -248,7 +247,7 @@ def load_processed_indices(progress_file):
     return processed
 
 # ============================================================
-# 4. MAIN PROCESSING FUNCTION (with encoding fix)
+# 4. MAIN PROCESSING FUNCTION
 # ============================================================
 async def process_part():
     print("="*70)
@@ -263,12 +262,9 @@ async def process_part():
 
     processed_set = load_processed_indices(PROGRESS_FILE)
 
-    # Read a sample to check columns – use utf-8-sig to handle BOM
     try:
         df_sample = pd.read_csv(INPUT_FILE, nrows=5, encoding='utf-8-sig')
         print("📋 Actual columns found:", df_sample.columns.tolist())
-        
-        # Check if the required columns exist (strip any leading/trailing whitespace)
         actual_cols = [col.strip() for col in df_sample.columns]
         if ROW_INDEX_COLUMN not in actual_cols or TITLE_COLUMN not in actual_cols:
             print("❌ Required columns missing.")
@@ -279,7 +275,6 @@ async def process_part():
         print(f"❌ Error reading file: {e}")
         sys.exit(1)
 
-    # Count total rows
     try:
         df_count = pd.read_csv(INPUT_FILE, usecols=[ROW_INDEX_COLUMN], encoding='utf-8-sig')
         total_rows = len(df_count)
