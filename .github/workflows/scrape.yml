@@ -6,19 +6,33 @@ on:
 jobs:
   scrape:
     runs-on: ubuntu-latest
+    timeout-minutes: 360  # 6 hours
     strategy:
+      fail-fast: false    # <-- Don't cancel other jobs if one fails
       matrix:
         part: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22]
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          lfs: true  # <-- ADD THIS LINE
+          lfs: true
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
+
+      # ----- NEW: Restore cached results folder for this part -----
+      - name: Restore results cache for part ${{ matrix.part }}
+        uses: actions/cache@v3
+        id: cache-results
+        with:
+          path: results/
+          key: sonyliv-part-${{ matrix.part }}-${{ github.run_id }}
+          restore-keys: |
+            sonyliv-part-${{ matrix.part }}-
+            sonyliv-part-
 
       - name: Install dependencies
         run: |
@@ -29,6 +43,14 @@ jobs:
           PART_NUMBER: ${{ matrix.part }}
         run: |
           python .github/workflows/sonyliv_processor.py
+
+      # ----- NEW: Save updated results cache -----
+      - name: Save results cache for part ${{ matrix.part }}
+        if: always()  # Even if the job fails, we want to save progress (if any)
+        uses: actions/cache@v3
+        with:
+          path: results/
+          key: sonyliv-part-${{ matrix.part }}-${{ github.run_id }}
 
       - name: Upload results for part ${{ matrix.part }}
         uses: actions/upload-artifact@v4
