@@ -15,6 +15,7 @@ import csv
 import json
 import re
 import nest_asyncio
+from aiohttp import ClientTimeout, TCPConnector
 from typing import Dict, List, Tuple, Set
 nest_asyncio.apply()
 
