@@ -1,0 +1,36 @@
+name: SonyLIV Scraper – 22 Parts Parallel
+
+on:
+  workflow_dispatch:  # Manual trigger
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        part: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          pip install pandas aiohttp nest-asyncio tqdm
+
+      - name: Run scraper for part ${{ matrix.part }}
+        env:
+          PART_NUMBER: ${{ matrix.part }}
+        run: |
+          python sonyliv_processor.py
+
+      - name: Upload results for part ${{ matrix.part }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: part-${{ matrix.part }}-results
+          path: results/
+          retention-days: 7
