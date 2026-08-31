@@ -26,7 +26,7 @@ jobs:
         env:
           PART_NUMBER: ${{ matrix.part }}
         run: |
-          python sonyliv_processor.py
+          python .github/workflows/sonyliv_processor.py
 
       - name: Upload results for part ${{ matrix.part }}
         uses: actions/upload-artifact@v4
