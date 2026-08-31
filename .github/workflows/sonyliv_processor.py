@@ -3,8 +3,6 @@
 
 """
 SONY LIV PROCESSOR – GitHub Actions Version
-Reads PART_NUMBER from environment variable.
-Saves results to ./results/part_XX_sonyliv_results.csv
 """
 
 import os
@@ -16,33 +14,19 @@ import aiohttp
 import csv
 import json
 import re
-from typing import Dict, List, Tuple, Set
-from aiohttp import ClientTimeout, TCPConnector
-from aiohttp.client_exceptions import ClientError
-from tqdm.asyncio import tqdm as tqdm_asyncio
-
-# ============================================================
-# FIX FOR JUPYTER/COLAB - Apply nest_asyncio
-# ============================================================
-try:
-    import nest_asyncio
-    nest_asyncio.apply()
-except ImportError:
-    import subprocess
-    subprocess.check_call(["pip", "install", "nest_asyncio"])
-    import nest_asyncio
-    nest_asyncio.apply()
+import nest_asyncio
+nest_asyncio.apply()
 
 # ============================================================
 # 1. CONFIGURATION
 # ============================================================
 PART_NUMBER = int(os.environ.get('PART_NUMBER', 1))
-INPUT_FILE = f"part_{PART_NUMBER:02d}.csv"   # Assumes input files are in repo root
+INPUT_FILE = f"part_{PART_NUMBER:02d}.csv"
 OUTPUT_DIR = "./results"
 PROGRESS_FILE = os.path.join(OUTPUT_DIR, f"part_{PART_NUMBER:02d}_progress.txt")
 OUTPUT_FILE = os.path.join(OUTPUT_DIR, f"part_{PART_NUMBER:02d}_sonyliv_results.csv")
 
-# Column names (must match your CSV)
+# Column names (these are exactly as in your CSV)
 ROW_INDEX_COLUMN = "row_index"
 TITLE_COLUMN = "primaryTitle"
 TCONST_COLUMN = "tconst"
@@ -80,7 +64,7 @@ CACHE_SIZE = 20000
 keep_running = True
 
 # ============================================================
-# 3. HELPER FUNCTIONS
+# 3. HELPER FUNCTIONS (unchanged)
 # ============================================================
 def get_category_path(category_name: str) -> str:
     if not category_name:
@@ -262,7 +246,7 @@ def load_processed_indices(progress_file):
     return processed
 
 # ============================================================
-# 4. MAIN PROCESSING FUNCTION
+# 4. MAIN PROCESSING FUNCTION (with encoding fix)
 # ============================================================
 async def process_part():
     print("="*70)
@@ -277,20 +261,29 @@ async def process_part():
 
     processed_set = load_processed_indices(PROGRESS_FILE)
 
+    # Read a sample to check columns – use utf-8-sig to handle BOM
     try:
-        df_sample = pd.read_csv(INPUT_FILE, nrows=5)
-        if ROW_INDEX_COLUMN not in df_sample.columns or TITLE_COLUMN not in df_sample.columns:
+        df_sample = pd.read_csv(INPUT_FILE, nrows=5, encoding='utf-8-sig')
+        print("📋 Actual columns found:", df_sample.columns.tolist())
+        
+        # Check if the required columns exist (strip any leading/trailing whitespace)
+        actual_cols = [col.strip() for col in df_sample.columns]
+        if ROW_INDEX_COLUMN not in actual_cols or TITLE_COLUMN not in actual_cols:
             print("❌ Required columns missing.")
+            print(f"   Expected: {ROW_INDEX_COLUMN}, {TITLE_COLUMN}, {TCONST_COLUMN}")
+            print(f"   Found: {df_sample.columns.tolist()}")
             sys.exit(1)
     except Exception as e:
         print(f"❌ Error reading file: {e}")
         sys.exit(1)
 
+    # Count total rows
     try:
-        df_count = pd.read_csv(INPUT_FILE, usecols=[ROW_INDEX_COLUMN])
+        df_count = pd.read_csv(INPUT_FILE, usecols=[ROW_INDEX_COLUMN], encoding='utf-8-sig')
         total_rows = len(df_count)
         print(f"📊 Total rows: {total_rows:,}")
     except Exception as e:
+        print(f"⚠️ Could not count rows: {e}")
         total_rows = 0
 
     remaining = total_rows - len(processed_set)
@@ -325,7 +318,8 @@ async def process_part():
                 usecols.append(TCONST_COLUMN)
 
             for chunk in pd.read_csv(INPUT_FILE, usecols=usecols, chunksize=CHUNK_SIZE,
-                                     dtype={ROW_INDEX_COLUMN: str, TITLE_COLUMN: str}):
+                                     dtype={ROW_INDEX_COLUMN: str, TITLE_COLUMN: str},
+                                     encoding='utf-8-sig'):
                 for _, row in chunk.iterrows():
                     row_index = int(row[ROW_INDEX_COLUMN])
                     if row_index in processed_set:
