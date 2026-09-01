@@ -140,7 +140,8 @@ def save_empty_response(data: Dict, movie_name: str, row_index: int, attempt: in
     os.makedirs(EMPTY_RESPONSES_DIR, exist_ok=True)
     sanitized_name = re.sub(r'[^\w\-_\. ]', '_', movie_name)[:50]
     if query and query != movie_name:
-        query_suffix = f"_query_{re.sub(r'[^\w\-_]', '_', query[:30])}"
+        sanitized_query = re.sub(r'[^\w\-_]', '_', query[:30])
+        query_suffix = f"_query_{sanitized_query}"
     else:
         query_suffix = ""
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
