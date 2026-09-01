@@ -24,31 +24,28 @@ from tqdm.asyncio import tqdm as tqdm_asyncio
 # ============================================================
 # 0. CONFIGURATION – READ FROM ENVIRONMENT
 # ============================================================
-PART_NUMBER = int(os.environ.get('PART_NUMBER', 1))          # e.g., 22 for part_22.csv
-INPUT_FILE = f"part_{PART_NUMBER:02d}.csv"                  # file must be in current directory
-OUTPUT_DIR = "./results"                                    # can be changed if needed
+PART_NUMBER = int(os.environ.get('PART_NUMBER', 1))
+INPUT_FILE = f"part_{PART_NUMBER:02d}.csv"
+OUTPUT_DIR = "./results"
 PROGRESS_FILE = os.path.join(OUTPUT_DIR, f"part_{PART_NUMBER:02d}_progress.txt")
 EMPTY_RESPONSES_DIR = os.path.join(OUTPUT_DIR, "empty_responses")
 
-# These flags can be overridden via environment if you like (not required)
-REBUILD_PROGRESS_FROM_CSV = True   # Rebuild progress from existing CSV
-SAVE_EMPTY = True                  # Save empty API responses for debugging
-PRINT_ALTERNATES = False           # Set to True to see alternate queries being tried
+REBUILD_PROGRESS_FROM_CSV = True
+SAVE_EMPTY = True
+PRINT_ALTERNATES = False           # Print when alternate queries are tried
+PRINT_SEARCH_LOGS = False          # NEW: turn off per-request logging
 
-# Column names (adjust if your CSV uses different headers)
 ROW_INDEX_COLUMN = "row_index"
 TITLE_COLUMN = "primaryTitle"
 TCONST_COLUMN = "tconst"
 
-# Performance tuning – START WITH SMALL VALUES FOR DEBUGGING
 MAX_VIDEOS_PER_TITLE = 20
-MAX_CONCURRENT_REQUESTS = 5      # reduced from 20
-BATCH_SIZE = 10                  # reduced from 100
+MAX_CONCURRENT_REQUESTS = 5
+BATCH_SIZE = 10
 REQUEST_TIMEOUT = 45
-SEMAPHORE_LIMIT = 5              # reduced from 20
+SEMAPHORE_LIMIT = 5
 CHUNK_SIZE = 50000
 
-# ---------- SonyLIV API ----------
 SONYLIV_SEARCH_URL = "https://apiv3.sonyliv.com/AGL/4.8/A/ENG/WEB/IN/TN/TRAY/SEARCH"
 SONYLIV_PARAMS = {
     "app_version": "3.10.3",
@@ -70,7 +67,7 @@ SONYLIV_HEADERS = {
 keep_running = True
 
 # ============================================================
-# 1. HELPER FUNCTIONS (same as local script)
+# 1. HELPER FUNCTIONS (unchanged)
 # ============================================================
 def get_category_path(category_name: str) -> str:
     if not category_name:
@@ -194,7 +191,6 @@ def generate_alternate_queries(original: str) -> List[str]:
         alternates.add(simple)
 
     result = [alt for alt in alternates if alt and len(alt) > 1]
-    # Deduplicate preserving order (original first)
     seen = set()
     ordered = []
     for alt in result:
@@ -204,14 +200,13 @@ def generate_alternate_queries(original: str) -> List[str]:
     return ordered[:100]
 
 # ============================================================
-# 2. ASYNC FUNCTIONS – WITH LOGGING
+# 2. ASYNC FUNCTIONS – WITH OPTIONAL LOGGING
 # ============================================================
 async def search_sonyliv_async(session, movie_name, semaphore) -> Dict:
-    """Send a search request with debug logging."""
     async with semaphore:
-        # Log start
-        now = datetime.datetime.now().isoformat(timespec='seconds')
-        print(f"[{now}] 🔍 Searching: '{movie_name[:40]}...'")
+        if PRINT_SEARCH_LOGS:
+            now = datetime.datetime.now().isoformat(timespec='seconds')
+            print(f"[{now}] 🔍 Searching: '{movie_name[:40]}...'")
         params = SONYLIV_PARAMS.copy()
         params["query"] = movie_name
         try:
@@ -219,26 +214,30 @@ async def search_sonyliv_async(session, movie_name, semaphore) -> Dict:
                 SONYLIV_SEARCH_URL,
                 params=params,
                 headers=SONYLIV_HEADERS,
-                timeout=REQUEST_TIMEOUT   # simple integer timeout
+                timeout=REQUEST_TIMEOUT
             ) as response:
-                status = response.status
-                print(f"   ← Status {status} for '{movie_name[:30]}'")
-                if status != 200:
+                if PRINT_SEARCH_LOGS:
+                    print(f"   ← Status {response.status} for '{movie_name[:30]}'")
+                if response.status != 200:
                     text = await response.text()
-                    print(f"   ❌ Non-200 response: {text[:200]}")
-                    return {"error": f"HTTP {status}: {text[:100]}"}
+                    if PRINT_SEARCH_LOGS:
+                        print(f"   ❌ Non-200 response: {text[:200]}")
+                    return {"error": f"HTTP {response.status}: {text[:100]}"}
                 data = await response.json()
-                if "error" in data:
+                if "error" in data and PRINT_SEARCH_LOGS:
                     print(f"   ⚠️ API error: {data['error']}")
                 return data
         except asyncio.TimeoutError:
-            print(f"   ⏰ TIMEOUT for '{movie_name[:30]}'")
+            if PRINT_SEARCH_LOGS:
+                print(f"   ⏰ TIMEOUT for '{movie_name[:30]}'")
             return {"error": "Request timed out"}
         except ClientError as e:
-            print(f"   ❌ Client error: {e}")
+            if PRINT_SEARCH_LOGS:
+                print(f"   ❌ Client error: {e}")
             return {"error": f"Client error: {str(e)}"}
         except Exception as e:
-            print(f"   ❌ Unexpected error: {e}")
+            if PRINT_SEARCH_LOGS:
+                print(f"   ❌ Unexpected error: {e}")
             return {"error": f"Request failed: {str(e)}"}
 
 async def process_movie_async(session, row_index, movie_name, tconst, semaphore) -> Dict:
@@ -253,14 +252,12 @@ async def process_movie_async(session, row_index, movie_name, tconst, semaphore)
         attempt = 0
         data = None
 
-        # First attempt
         attempt += 1
         data = await search_sonyliv_async(session, movie_name, semaphore)
         video_assets = extract_assets_with_urls(data)
         if not video_assets and SAVE_EMPTY:
             save_empty_response(data, movie_name, row_index, attempt, movie_name)
 
-        # Retries same name (up to 2 more)
         MAX_SAME_NAME_RETRIES = 2
         while not video_assets and attempt <= MAX_SAME_NAME_RETRIES:
             attempt += 1
@@ -270,7 +267,6 @@ async def process_movie_async(session, row_index, movie_name, tconst, semaphore)
             if not video_assets and SAVE_EMPTY:
                 save_empty_response(data, movie_name, row_index, attempt, movie_name)
 
-        # Alternate queries
         if not video_assets:
             alternates = generate_alternate_queries(movie_name)
             alternates = [alt for alt in alternates if alt != movie_name]
@@ -323,7 +319,7 @@ async def process_batch_async(session, batch, semaphore):
     return processed_results
 
 # ============================================================
-# 3. PROGRESS FILE MANAGEMENT
+# 3. PROGRESS FILE MANAGEMENT (unchanged)
 # ============================================================
 def rebuild_progress_from_csv(csv_file: str, progress_file: str):
     if not os.path.exists(csv_file):
@@ -374,6 +370,7 @@ async def process_part():
     print(f"🔁 Rebuild progress from CSV: {REBUILD_PROGRESS_FROM_CSV}")
     print(f"📂 Saving empty responses: {SAVE_EMPTY}")
     print(f"🔍 Print alternates: {PRINT_ALTERNATES}")
+    print(f"📢 Search logs: {'ON' if PRINT_SEARCH_LOGS else 'OFF'}")
     print("=" * 70)
 
     os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -418,9 +415,9 @@ async def process_part():
     mode = 'a' if output_exists else 'w'
     print(f"\n📝 Output file: {os.path.basename(output_file)}")
 
-    # ---- ONE-TIME TEST REQUEST TO VERIFY API ----
+    # ---- ONE-TIME TEST REQUEST (always prints) ----
     print("\n🔬 Sending test request to SonyLIV API...")
-    semaphore = asyncio.Semaphore(1)   # use a separate semaphore for the test
+    semaphore = asyncio.Semaphore(1)
     connector = TCPConnector(limit=1)
     timeout = ClientTimeout(total=REQUEST_TIMEOUT, connect=10)
     async with aiohttp.ClientSession(connector=connector, timeout=timeout) as test_session:
@@ -455,7 +452,6 @@ async def process_part():
             processed_this_run = 0
             successful_this_run = 0
 
-            # Progress bar: total = remaining rows to process
             pbar = tqdm_asyncio(total=remaining, desc=f"Part {PART_NUMBER:02d}", unit="rows")
             usecols = [ROW_INDEX_COLUMN, TITLE_COLUMN]
             if TCONST_COLUMN:
@@ -484,10 +480,8 @@ async def process_part():
                                 pf.write('\n'.join(str(i) for i in successful_indices) + '\n')
                             processed_set.update(successful_indices)
                             successful_this_run += len(output_results)
-                        # Update progress bar for ALL processed rows (not just successful)
                         processed_this_run += len(results)
                         pbar.update(len(results))
-                        # Update description with successful count
                         pbar.set_description(f"Part {PART_NUMBER:02d} (ok: {successful_this_run:,})")
                         batch.clear()
                 # Flush remaining batch
@@ -519,7 +513,6 @@ async def process_part():
                 print(f"⏱️ Time: {elapsed:.2f} seconds")
             print("="*60)
 
-    # Final row count (chunked)
     try:
         total_rows_in_csv = 0
         for chunk in pd.read_csv(output_file, chunksize=10000):
