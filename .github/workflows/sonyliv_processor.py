@@ -479,6 +479,7 @@ async def process_part():
                         print(f"\n🔄 Batch #{batch_count} – processing {len(batch)} movies...")
                         results = await process_batch_async(session, batch, semaphore)
                         output_results = [r for r in results if r['video_data'] != "[]"]
+                        batch_successes = len(output_results)
 
                         if output_results:
                             writer.writerows([[r['row_index'], r['tconst'], r['movie_name'], r['is_present'], r['video_data']] for r in output_results])
@@ -487,10 +488,12 @@ async def process_part():
                             with open(PROGRESS_FILE, 'a') as pf:
                                 pf.write('\n'.join(str(i) for i in successful_indices) + '\n')
                             processed_set.update(successful_indices)
-                            successful_this_run += len(output_results)
-                            print(f"   ✅ Found {len(output_results)} successes – cumulative: {successful_this_run:,}")
+                            successful_this_run += batch_successes
 
+                        # ALWAYS print batch summary (even if zero successes)
                         processed_this_run += len(results)
+                        print(f"   ✅ Batch #{batch_count} completed: processed {len(results)} rows, successes: {batch_successes} (cumulative: {successful_this_run:,})")
+
                         pbar.update(len(results))
                         pbar.set_description(f"Part {PART_NUMBER:02d} (ok: {successful_this_run:,})")
                         sys.stdout.flush()
@@ -502,6 +505,8 @@ async def process_part():
                     print(f"\n🔄 Batch #{batch_count} – processing {len(batch)} movies (final batch)...")
                     results = await process_batch_async(session, batch, semaphore)
                     output_results = [r for r in results if r['video_data'] != "[]"]
+                    batch_successes = len(output_results)
+
                     if output_results:
                         writer.writerows([[r['row_index'], r['tconst'], r['movie_name'], r['is_present'], r['video_data']] for r in output_results])
                         csvfile.flush()
@@ -509,10 +514,11 @@ async def process_part():
                         with open(PROGRESS_FILE, 'a') as pf:
                             pf.write('\n'.join(str(i) for i in successful_indices) + '\n')
                         processed_set.update(successful_indices)
-                        successful_this_run += len(output_results)
-                        print(f"   ✅ Found {len(output_results)} successes – cumulative: {successful_this_run:,}")
+                        successful_this_run += batch_successes
 
                     processed_this_run += len(results)
+                    print(f"   ✅ Batch #{batch_count} completed: processed {len(results)} rows, successes: {batch_successes} (cumulative: {successful_this_run:,})")
+
                     pbar.update(len(results))
                     pbar.set_description(f"Part {PART_NUMBER:02d} (ok: {successful_this_run:,})")
                     sys.stdout.flush()
