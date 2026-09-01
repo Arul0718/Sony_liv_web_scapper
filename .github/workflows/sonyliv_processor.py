@@ -33,7 +33,7 @@ EMPTY_RESPONSES_DIR = os.path.join(OUTPUT_DIR, "empty_responses")
 REBUILD_PROGRESS_FROM_CSV = True
 SAVE_EMPTY = True
 PRINT_ALTERNATES = False           # Print when alternate queries are tried
-PRINT_SEARCH_LOGS = False          # NEW: turn off per-request logging
+PRINT_SEARCH_LOGS = False          # turn off per-request logging
 
 ROW_INDEX_COLUMN = "row_index"
 TITLE_COLUMN = "primaryTitle"
@@ -480,6 +480,10 @@ async def process_part():
                                 pf.write('\n'.join(str(i) for i in successful_indices) + '\n')
                             processed_set.update(successful_indices)
                             successful_this_run += len(output_results)
+
+                            # 🆕 PRINT SUCCESS BATCH INFO
+                            print(f"✅ Batch found {len(output_results)} successes (cumulative: {successful_this_run:,})")
+
                         processed_this_run += len(results)
                         pbar.update(len(results))
                         pbar.set_description(f"Part {PART_NUMBER:02d} (ok: {successful_this_run:,})")
@@ -496,6 +500,10 @@ async def process_part():
                             pf.write('\n'.join(str(i) for i in successful_indices) + '\n')
                         processed_set.update(successful_indices)
                         successful_this_run += len(output_results)
+
+                        # 🆕 PRINT SUCCESS BATCH INFO
+                        print(f"✅ Batch found {len(output_results)} successes (cumulative: {successful_this_run:,})")
+
                     processed_this_run += len(results)
                     pbar.update(len(results))
                     pbar.set_description(f"Part {PART_NUMBER:02d} (ok: {successful_this_run:,})")
