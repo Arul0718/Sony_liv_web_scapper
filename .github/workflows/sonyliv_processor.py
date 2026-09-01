@@ -319,7 +319,7 @@ async def process_batch_async(session, batch, semaphore):
     return processed_results
 
 # ============================================================
-# 3. PROGRESS FILE MANAGEMENT (unchanged)
+# 3. PROGRESS FILE MANAGEMENT
 # ============================================================
 def rebuild_progress_from_csv(csv_file: str, progress_file: str):
     if not os.path.exists(csv_file):
@@ -452,7 +452,8 @@ async def process_part():
             processed_this_run = 0
             successful_this_run = 0
 
-            pbar = tqdm_asyncio(total=remaining, desc=f"Part {PART_NUMBER:02d}", unit="rows")
+            # 🔄 Progress bar tracks SUCCESSES only
+            pbar = tqdm_asyncio(total=remaining, desc=f"Part {PART_NUMBER:02d} (success)", unit="success")
             usecols = [ROW_INDEX_COLUMN, TITLE_COLUMN]
             if TCONST_COLUMN:
                 usecols.append(TCONST_COLUMN)
@@ -481,12 +482,15 @@ async def process_part():
                             processed_set.update(successful_indices)
                             successful_this_run += len(output_results)
 
-                            # 🆕 PRINT SUCCESS BATCH INFO
+                            # 🆕 Update progress bar with successes
+                            pbar.update(len(output_results))
+                            pbar.set_description(f"Part {PART_NUMBER:02d} (success: {successful_this_run:,})")
+
+                            # Print batch success info
                             print(f"✅ Batch found {len(output_results)} successes (cumulative: {successful_this_run:,})")
 
                         processed_this_run += len(results)
-                        pbar.update(len(results))
-                        pbar.set_description(f"Part {PART_NUMBER:02d} (ok: {successful_this_run:,})")
+                        # Do NOT update pbar with processed rows – only successes
                         batch.clear()
                 # Flush remaining batch
                 if batch:
@@ -501,12 +505,14 @@ async def process_part():
                         processed_set.update(successful_indices)
                         successful_this_run += len(output_results)
 
-                        # 🆕 PRINT SUCCESS BATCH INFO
+                        # 🆕 Update progress bar with successes
+                        pbar.update(len(output_results))
+                        pbar.set_description(f"Part {PART_NUMBER:02d} (success: {successful_this_run:,})")
+
                         print(f"✅ Batch found {len(output_results)} successes (cumulative: {successful_this_run:,})")
 
                     processed_this_run += len(results)
-                    pbar.update(len(results))
-                    pbar.set_description(f"Part {PART_NUMBER:02d} (ok: {successful_this_run:,})")
+                    # Do NOT update pbar with processed rows
                     batch.clear()
 
             pbar.close()
