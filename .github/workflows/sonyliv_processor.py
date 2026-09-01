@@ -32,8 +32,8 @@ EMPTY_RESPONSES_DIR = os.path.join(OUTPUT_DIR, "empty_responses")
 
 REBUILD_PROGRESS_FROM_CSV = True
 SAVE_EMPTY = True
-PRINT_ALTERNATES = False           # Print when alternate queries are tried
-PRINT_SEARCH_LOGS = False          # turn off per-request logging
+PRINT_ALTERNATES = False
+PRINT_SEARCH_LOGS = False          # Set to True for debugging, False for clean output
 
 ROW_INDEX_COLUMN = "row_index"
 TITLE_COLUMN = "primaryTitle"
@@ -154,19 +154,16 @@ def generate_alternate_queries(original: str) -> List[str]:
     alternates = set()
     alternates.add(original)
 
-    # Remove year in parentheses
     cleaned = re.sub(r'\s*\(\d{4}\)', '', original).strip()
     if cleaned != original:
         alternates.add(cleaned)
 
-    # Remove common prefixes
     for prefix in ["The ", "A ", "An "]:
         if cleaned.startswith(prefix):
             alt = cleaned[len(prefix):].strip()
             if alt and alt != cleaned:
                 alternates.add(alt)
 
-    # Drop words from the end (up to 3)
     tokens = cleaned.split()
     if len(tokens) > 2:
         for i in range(1, min(4, len(tokens))):
@@ -174,18 +171,15 @@ def generate_alternate_queries(original: str) -> List[str]:
             if alt and alt != cleaned:
                 alternates.add(alt)
 
-    # Drop words from the beginning (up to 2)
     if len(tokens) > 2:
         for i in range(1, min(3, len(tokens))):
             alt = ' '.join(tokens[i:])
             if alt and alt != cleaned:
                 alternates.add(alt)
 
-    # First word only
     if tokens and len(tokens[0]) > 2:
         alternates.add(tokens[0])
 
-    # Remove special characters
     simple = re.sub(r'[^a-zA-Z0-9\s]', '', cleaned).strip()
     if simple != cleaned:
         alternates.add(simple)
@@ -356,7 +350,7 @@ def load_processed_indices(progress_file: str) -> Set[int]:
     return processed
 
 # ============================================================
-# 4. MAIN PROCESSING FUNCTION
+# 4. MAIN PROCESSING FUNCTION – WITH CLEAR PROGRESS LOGS
 # ============================================================
 async def process_part():
     global keep_running
@@ -451,9 +445,19 @@ async def process_part():
             start_time = time.time()
             processed_this_run = 0
             successful_this_run = 0
+            batch_count = 0
 
-            # 🔄 Progress bar tracks SUCCESSES only
-            pbar = tqdm_asyncio(total=remaining, desc=f"Part {PART_NUMBER:02d} (success)", unit="success")
+            # Use stdout and ascii to ensure the bar appears in GitHub Actions
+            pbar = tqdm_asyncio(
+                total=remaining,
+                desc=f"Part {PART_NUMBER:02d}",
+                unit="rows",
+                file=sys.stdout,
+                ascii=True,
+                leave=True,
+                mininterval=0.5,
+            )
+
             usecols = [ROW_INDEX_COLUMN, TITLE_COLUMN]
             if TCONST_COLUMN:
                 usecols.append(TCONST_COLUMN)
@@ -471,8 +475,11 @@ async def process_part():
                     tconst = str(row[TCONST_COLUMN]) if TCONST_COLUMN and TCONST_COLUMN in row else ""
                     batch.append((row_index, tconst, title))
                     if len(batch) >= BATCH_SIZE:
+                        batch_count += 1
+                        print(f"\n🔄 Batch #{batch_count} – processing {len(batch)} movies...")
                         results = await process_batch_async(session, batch, semaphore)
                         output_results = [r for r in results if r['video_data'] != "[]"]
+
                         if output_results:
                             writer.writerows([[r['row_index'], r['tconst'], r['movie_name'], r['is_present'], r['video_data']] for r in output_results])
                             csvfile.flush()
@@ -481,19 +488,18 @@ async def process_part():
                                 pf.write('\n'.join(str(i) for i in successful_indices) + '\n')
                             processed_set.update(successful_indices)
                             successful_this_run += len(output_results)
-
-                            # 🆕 Update progress bar with successes
-                            pbar.update(len(output_results))
-                            pbar.set_description(f"Part {PART_NUMBER:02d} (success: {successful_this_run:,})")
-
-                            # Print batch success info
-                            print(f"✅ Batch found {len(output_results)} successes (cumulative: {successful_this_run:,})")
+                            print(f"   ✅ Found {len(output_results)} successes – cumulative: {successful_this_run:,}")
 
                         processed_this_run += len(results)
-                        # Do NOT update pbar with processed rows – only successes
+                        pbar.update(len(results))
+                        pbar.set_description(f"Part {PART_NUMBER:02d} (ok: {successful_this_run:,})")
+                        sys.stdout.flush()
                         batch.clear()
+
                 # Flush remaining batch
                 if batch:
+                    batch_count += 1
+                    print(f"\n🔄 Batch #{batch_count} – processing {len(batch)} movies (final batch)...")
                     results = await process_batch_async(session, batch, semaphore)
                     output_results = [r for r in results if r['video_data'] != "[]"]
                     if output_results:
@@ -504,15 +510,12 @@ async def process_part():
                             pf.write('\n'.join(str(i) for i in successful_indices) + '\n')
                         processed_set.update(successful_indices)
                         successful_this_run += len(output_results)
-
-                        # 🆕 Update progress bar with successes
-                        pbar.update(len(output_results))
-                        pbar.set_description(f"Part {PART_NUMBER:02d} (success: {successful_this_run:,})")
-
-                        print(f"✅ Batch found {len(output_results)} successes (cumulative: {successful_this_run:,})")
+                        print(f"   ✅ Found {len(output_results)} successes – cumulative: {successful_this_run:,}")
 
                     processed_this_run += len(results)
-                    # Do NOT update pbar with processed rows
+                    pbar.update(len(results))
+                    pbar.set_description(f"Part {PART_NUMBER:02d} (ok: {successful_this_run:,})")
+                    sys.stdout.flush()
                     batch.clear()
 
             pbar.close()
