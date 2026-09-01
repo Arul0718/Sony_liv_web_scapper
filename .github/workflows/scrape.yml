@@ -23,17 +23,6 @@ jobs:
         with:
           python-version: '3.10'
 
-      # ---------- Restore cache (progress + partial output) ----------
-      - name: Restore results cache for part ${{ matrix.part }}
-        uses: actions/cache@v3
-        id: cache-restore
-        with:
-          path: results/
-          key: sonyliv-part-${{ matrix.part }}-${{ github.run_id }}
-          restore-keys: |
-            sonyliv-part-${{ matrix.part }}-
-            sonyliv-part-
-
       - name: Install dependencies
         run: |
           pip install pandas aiohttp nest-asyncio tqdm
@@ -44,17 +33,9 @@ jobs:
         run: |
           python .github/workflows/sonyliv_processor.py
 
-      # ---------- Save cache (to preserve progress for resuming) ----------
-      - name: Save results cache for part ${{ matrix.part }}
-        if: always()   # even on failure
-        uses: actions/cache@v3
-        with:
-          path: results/
-          key: sonyliv-part-${{ matrix.part }}-${{ github.run_id }}
-
       # ---------- Upload artifact – even if the job fails ----------
       - name: Upload results for part ${{ matrix.part }}
-        if: always()   # <-- THIS IS KEY – uploads even on failure
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: part-${{ matrix.part }}-results
