@@ -18,7 +18,7 @@ import json
 import re
 import datetime
 from typing import Dict, List, Set
-from aiohttp import ClientTimeout, TCPConnector
+from aiohttp import ClientTimeout, TCPConnector, ClientError
 from tqdm.asyncio import tqdm as tqdm_asyncio
 
 # ============================================================
@@ -40,12 +40,12 @@ ROW_INDEX_COLUMN = "row_index"
 TITLE_COLUMN = "primaryTitle"
 TCONST_COLUMN = "tconst"
 
-# Performance tuning
+# Performance tuning – START WITH SMALL VALUES FOR DEBUGGING
 MAX_VIDEOS_PER_TITLE = 20
-MAX_CONCURRENT_REQUESTS = 20
-BATCH_SIZE = 100
+MAX_CONCURRENT_REQUESTS = 5      # reduced from 20
+BATCH_SIZE = 10                  # reduced from 100
 REQUEST_TIMEOUT = 45
-SEMAPHORE_LIMIT = 20
+SEMAPHORE_LIMIT = 5              # reduced from 20
 CHUNK_SIZE = 50000
 
 # ---------- SonyLIV API ----------
@@ -204,10 +204,14 @@ def generate_alternate_queries(original: str) -> List[str]:
     return ordered[:100]
 
 # ============================================================
-# 2. ASYNC FUNCTIONS – NO CACHING
+# 2. ASYNC FUNCTIONS – WITH LOGGING
 # ============================================================
 async def search_sonyliv_async(session, movie_name, semaphore) -> Dict:
+    """Send a search request with debug logging."""
     async with semaphore:
+        # Log start
+        now = datetime.datetime.now().isoformat(timespec='seconds')
+        print(f"[{now}] 🔍 Searching: '{movie_name[:40]}...'")
         params = SONYLIV_PARAMS.copy()
         params["query"] = movie_name
         try:
@@ -215,14 +219,26 @@ async def search_sonyliv_async(session, movie_name, semaphore) -> Dict:
                 SONYLIV_SEARCH_URL,
                 params=params,
                 headers=SONYLIV_HEADERS,
-                timeout=ClientTimeout(total=REQUEST_TIMEOUT)
+                timeout=REQUEST_TIMEOUT   # simple integer timeout
             ) as response:
-                response.raise_for_status()
+                status = response.status
+                print(f"   ← Status {status} for '{movie_name[:30]}'")
+                if status != 200:
+                    text = await response.text()
+                    print(f"   ❌ Non-200 response: {text[:200]}")
+                    return {"error": f"HTTP {status}: {text[:100]}"}
                 data = await response.json()
                 if "error" in data:
-                    print(f"⚠️ SonyLIV error for '{movie_name[:30]}...': {data['error']}")
+                    print(f"   ⚠️ API error: {data['error']}")
                 return data
+        except asyncio.TimeoutError:
+            print(f"   ⏰ TIMEOUT for '{movie_name[:30]}'")
+            return {"error": "Request timed out"}
+        except ClientError as e:
+            print(f"   ❌ Client error: {e}")
+            return {"error": f"Client error: {str(e)}"}
         except Exception as e:
+            print(f"   ❌ Unexpected error: {e}")
             return {"error": f"Request failed: {str(e)}"}
 
 async def process_movie_async(session, row_index, movie_name, tconst, semaphore) -> Dict:
@@ -402,6 +418,24 @@ async def process_part():
     mode = 'a' if output_exists else 'w'
     print(f"\n📝 Output file: {os.path.basename(output_file)}")
 
+    # ---- ONE-TIME TEST REQUEST TO VERIFY API ----
+    print("\n🔬 Sending test request to SonyLIV API...")
+    semaphore = asyncio.Semaphore(1)   # use a separate semaphore for the test
+    connector = TCPConnector(limit=1)
+    timeout = ClientTimeout(total=REQUEST_TIMEOUT, connect=10)
+    async with aiohttp.ClientSession(connector=connector, timeout=timeout) as test_session:
+        test_data = await search_sonyliv_async(test_session, "The Godfather", semaphore)
+        if "error" in test_data and test_data["error"]:
+            print(f"❌ Test request failed: {test_data['error']}")
+            print("   ⚠️ The API may be unreachable or the endpoint/headers are incorrect.")
+            print("   Exiting to avoid wasting time.")
+            sys.exit(1)
+        else:
+            assets = extract_assets_with_urls(test_data)
+            print(f"✅ Test request succeeded! Found {len(assets)} assets for 'The Godfather'.")
+            print("   Continuing with full processing...")
+
+    # ---- MAIN PROCESSING LOOP ----
     semaphore = asyncio.Semaphore(SEMAPHORE_LIMIT)
     connector = TCPConnector(limit=MAX_CONCURRENT_REQUESTS, limit_per_host=MAX_CONCURRENT_REQUESTS,
                              ttl_dns_cache=300, enable_cleanup_closed=True)
@@ -421,7 +455,8 @@ async def process_part():
             processed_this_run = 0
             successful_this_run = 0
 
-            pbar = tqdm_asyncio(total=remaining, desc=f"Part {PART_NUMBER:02d}", unit="success")
+            # Progress bar: total = remaining rows to process
+            pbar = tqdm_asyncio(total=remaining, desc=f"Part {PART_NUMBER:02d}", unit="rows")
             usecols = [ROW_INDEX_COLUMN, TITLE_COLUMN]
             if TCONST_COLUMN:
                 usecols.append(TCONST_COLUMN)
@@ -449,10 +484,13 @@ async def process_part():
                                 pf.write('\n'.join(str(i) for i in successful_indices) + '\n')
                             processed_set.update(successful_indices)
                             successful_this_run += len(output_results)
-                            pbar.update(len(output_results))
-                            pbar.set_description(f"Part {PART_NUMBER:02d} (total: {successful_this_run:,})")
+                        # Update progress bar for ALL processed rows (not just successful)
                         processed_this_run += len(results)
+                        pbar.update(len(results))
+                        # Update description with successful count
+                        pbar.set_description(f"Part {PART_NUMBER:02d} (ok: {successful_this_run:,})")
                         batch.clear()
+                # Flush remaining batch
                 if batch:
                     results = await process_batch_async(session, batch, semaphore)
                     output_results = [r for r in results if r['video_data'] != "[]"]
@@ -464,9 +502,9 @@ async def process_part():
                             pf.write('\n'.join(str(i) for i in successful_indices) + '\n')
                         processed_set.update(successful_indices)
                         successful_this_run += len(output_results)
-                        pbar.update(len(output_results))
-                        pbar.set_description(f"Part {PART_NUMBER:02d} (total: {successful_this_run:,})")
                     processed_this_run += len(results)
+                    pbar.update(len(results))
+                    pbar.set_description(f"Part {PART_NUMBER:02d} (ok: {successful_this_run:,})")
                     batch.clear()
 
             pbar.close()
